@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -17,125 +18,46 @@ namespace MarketWatch
 {
     public partial class Form1 : Form
     {
-        List<float> points = new List<float>();
-        List<float> hodlPoints = new List<float>();
-        List<float> divs = new List<float>();
-        List<DateTime> dates = new List<DateTime>();
-        float zoom = 1;
-        private Timer timer1;
-        public int interval = 2000;
-        public List<float> centers = new List<float>();
-        public List<float> dips = new List<float>();
-        public List<float> dipPoints = new List<float>();
-        float dipCooldown = 0;
-
-        List<float> pctTally = new List<float>();
-        List<float> pctTallyHodlMode = new List<float>();
-        List<float> emaShort = new List<float>();
-        List<float> emaLong = new List<float>();
-        List<float> smasShort = new List<float>();
-        List<float> smasLong = new List<float>();
-        int emaShortLength = 130;
-        int emaLongLength = 340;
-        float divergence = 0;
-        float divergencePrev = 0;
-        float divergenceMax = 0;
-        float divergenceMin = 0;
-
-        float asks = 0;
-        float bids = 0;
-        float boughtAt = 0;
-        float pctSum = 0;
-        string strLog = "";
-        string logPath = "";
-        string strTradeAction = "";
-
-        float buyThreshLong = 0.3f;
-        float buyThresh = 0.5f;
-        int buyTally = 50;
-        int buyLongTally = 3000;
-        float sellThreshLong = -0.3f;
-        float sellThresh = -0.5f;
-        int sellTally = 20;
-        int sellLongTally = 6000;
-
-        int chartStartIdx = 0;
-        int chartEndIdx = 0;
-
-        float tradeAmount = 0.00034f;
-
-        int ticks = 0;
-
-        bool testMode = false;
-        bool tradeEnabled = false;
-
-        int splitSpan = 250;
-        float fit = 10f;
-
-        Random r = new Random();
-
         private static readonly HttpClient client = new HttpClient();
 
-        public enum tradeState
+        string logPath = "";
+        string strLog = "";
+        Timer timer1;
+        int interval = 300000;
+        int ticks = 0;
+        int numUpdates = 0;
+
+        protected struct coinData
         {
-            buy,
-            sell,
-            hodl
+            public string name;
+            public double marketCap;
+            public double price;
+            public double volume;
+            public double fiveMin;
+            public double hr;
+            public double day;
+            public double week;
+            public int posTicks;
+            public int negTicks;
+            public List<int> posTicks10;
+            public List<int> negTicks10;
+            public double upRatio;
+            public double upRatio10;
         }
 
-        public List<tradeState> states = new List<tradeState>();
-
-        public enum emaState
+        protected struct snapShot
         {
-            shortAbove,
-            shortBelow,
-            shortCrossedUp,
-            shortCrossedDown
+            public DateTime timeStamp;
+            public List<coinData> coins;
         }
 
-        public List<emaState> emaStates = new List<emaState>();
-
-        public struct testResult
-        {
-            public float buyThresh;
-            public float sellThresh;
-            public int buyTally;
-            public int sellTally;
-            public float gain;
-            public float gainPct;
-        }
-
-        public struct testResultMA
-        {
-            public int emaShort;
-            public int emaLong;
-            public float gain;
-            public float gainPct;
-        }
-
-        public List<testResult> results = new List<testResult>();
-        public int testNum = 0;
-        public float highestGain = -10;
-
-        public string buyMsg = "";
-        //public string buyException = "";
-        public string buyMsgPrev = "";
-        public string sellMsg = "";
-        //public string buyExceptionPrev = "";
-        public string sellMsgPrev = "";
-        //public string sellExceptionPrev = "";
-        
-        Task<ulong> bID;
-        Task<ulong> sID;
+        List<snapShot> snapShots = new List<snapShot>();
 
         public Form1()
         {
             InitializeComponent();
 
-            logPath = DateTime.Now.ToString().Replace("/", "-").Replace(":", ".") + ".csv";
-            strLog += "last" + ",," + "pct" + ",," + "tally" + ",," + "TimeStamp" + ",," + "Trade Action" + "\n";
-
-            
+            listView1.ListViewItemSorter = new Sorter();
         }
 
         private void button1_Click(object sender, EventArgs e)
@@ -144,6 +66,7 @@ namespace MarketWatch
             {
                 InitTimer();
                 button1.Text = "Stop";
+                timer1_Tick(new object(), new EventArgs());
             }
             else
             {
@@ -163,57 +86,21 @@ namespace MarketWatch
 
         private void timer1_Tick(object sender, EventArgs e)
         {
-            //run_cmd(@"C:\Users\Peter\Desktop\tr\test.py", "");
-
             ticks++;
-            
-            getHttpBittrex();
+            getHttpCMC();
 
         }
-
-        public async void getHttpPolo()
+        
+        public async void getHttpCMC()
         {
-            var responseString = "";
+            label1.Text = "Updating";
 
-            try
-            {
-                responseString = await client.GetStringAsync("https://poloniex.com/public?command=returnOrderBook&currencyPair=USDT_BTC&depth=1");
-            }
-            catch (TaskCanceledException e1)
-            {
-                return;
-            }
-
-            responseString = responseString.Replace("{\"asks\":[[\"", "");
-
-            asks = float.Parse(responseString.Substring(0, responseString.IndexOf("\",")));
-
-            string phrase = "\"bids\":[[\"";
-            responseString = responseString.Substring(responseString.IndexOf(phrase) + phrase.Length, 30);
-
-            bids = float.Parse(responseString.Substring(0, responseString.IndexOf("\"")));
-
-            //{ "asks":[["2671.30000000",0.33697612]],"bids":[["2670.33904965",9.32269263]],"isFrozen":"0","seq":114438621}
-
-            float lastPrice = (asks + bids) / 2f;
-
-            centers.Add(lastPrice);
-
-            if (centers.Count > 100)
-                centers.RemoveAt(0);
-
-            httpStrat();
-            //centerLiteStrat();
-        }
-
-        public async void getHttpBittrex()
-        {
             var responseString = "";
 
 
             try
             {
-                responseString = await client.GetStringAsync("https://bittrex.com/api/v1.1/public/getorderbook?market=USDT-BTC&type=both&depth=1");
+                responseString = await client.GetStringAsync("https://coinmarketcap.com/all/views/all/");
             }
             catch (TaskCanceledException e1)
             {
@@ -226,103 +113,319 @@ namespace MarketWatch
                 return;
             }
 
+            if (snapShots.Count > 0)
+                numUpdates++;
 
-            string phrase = "\"Rate\":";
+            //Debug.Print(responseString);
+
+            string phrase = "<tbody>";
             int startIdx = responseString.IndexOf(phrase) + phrase.Length;
-            responseString = responseString.Substring(startIdx, responseString.Length - startIdx);
-            float asks = float.Parse(responseString.Substring(0, responseString.IndexOf("},{")));
+            phrase = "</tbody>";
+            int endIdx = responseString.IndexOf(phrase);
+            responseString = responseString.Substring(startIdx, endIdx - startIdx);
 
-            phrase = "sell\":[{\"Quantity\":";
-            startIdx = responseString.IndexOf(phrase) + phrase.Length;
-            responseString = responseString.Substring(startIdx, responseString.Length - startIdx);
+            //Debug.Print(responseString);
 
-            phrase = "\"Rate\":";
-            startIdx = responseString.IndexOf(phrase) + phrase.Length;
-            responseString = responseString.Substring(startIdx, responseString.Length - startIdx);
+            snapShot s;
 
-            float bids = float.Parse(responseString.Substring(0, responseString.IndexOf("},{")));
+            s.timeStamp = DateTime.Now;
+            s.coins = new List<coinData>();
 
-
-            float lastPrice = (asks + bids) / 2f;
-
-            centers.Add(lastPrice);
-
-            if (centers.Count > 100)
-                centers.RemoveAt(0);
-
-            httpStrat();
-        }
-
-        public void httpStrat()
-        {
-            float pctIncrease = 0;
-
-            if (centers.Count > 1)
+            while (responseString.Contains("</tr>"))
             {
-                pctIncrease = centers[centers.Count - 1] - centers[centers.Count - 2];
-                pctIncrease /= centers[centers.Count - 1];
-                pctIncrease *= 100;
+                coinData c;
+                c.posTicks10 = new List<int>();
+                c.negTicks10 = new List<int>();
+
+                phrase = "<tr id=\"id-";
+                startIdx = responseString.IndexOf(phrase) + phrase.Length;
+                phrase = "\"  class=";
+                endIdx = responseString.IndexOf(phrase);
+
+                if (endIdx < 0)
+                    endIdx = 10;
+                string coinName = responseString.Substring(startIdx, endIdx - startIdx);
+                responseString = responseString.Substring(endIdx + phrase.Length, responseString.Length - (endIdx + phrase.Length));
+
+                phrase = "data-btc=\"";
+                startIdx = responseString.IndexOf(phrase) + phrase.Length;
+                phrase = "\" >";
+                endIdx = responseString.IndexOf(phrase);
+
+                if (endIdx < 0)
+                    endIdx = 10;
+                string strMarketCap = responseString.Substring(startIdx, endIdx - startIdx);
+                double marketCap = 0;
+                double.TryParse(strMarketCap, out marketCap);
+                responseString = responseString.Substring(endIdx + phrase.Length, responseString.Length - (endIdx + phrase.Length));
+
+                phrase = "data-btc=\"";
+                startIdx = responseString.IndexOf(phrase) + phrase.Length;
+                phrase = "\" >";
+                endIdx = responseString.IndexOf(phrase);
+
+                if (endIdx < 0)
+                    endIdx = 10;
+                string strPrice = responseString.Substring(startIdx, endIdx - startIdx);
+                double price = 0;
+                double.TryParse(strPrice, out price);
+                responseString = responseString.Substring(endIdx + phrase.Length, responseString.Length - (endIdx + phrase.Length));
+
+                phrase = "data-btc=\"";
+                startIdx = responseString.IndexOf(phrase) + phrase.Length;
+                phrase = "\" >";
+                endIdx = responseString.IndexOf(phrase);
+
+                if (endIdx < 0)
+                    endIdx = 10;
+                string strVolume = responseString.Substring(startIdx, endIdx - startIdx);
+                double volume = 0;
+                double.TryParse(strVolume, out volume);
+                responseString = responseString.Substring(endIdx + phrase.Length, responseString.Length - (endIdx + phrase.Length));
+
+                phrase = "data-btc=\"";
+                startIdx = responseString.IndexOf(phrase) + phrase.Length;
+                phrase = "\" >";
+                endIdx = responseString.IndexOf(phrase);
+
+                if (endIdx < 0)
+                    endIdx = 10;
+                string strHr = responseString.Substring(startIdx, endIdx - startIdx);
+                double hr = 0;
+                double.TryParse(strHr, out hr);
+                responseString = responseString.Substring(endIdx + phrase.Length, responseString.Length - (endIdx + phrase.Length));
+
+                phrase = "data-btc=\"";
+                startIdx = responseString.IndexOf(phrase) + phrase.Length;
+                phrase = "\" >";
+                endIdx = responseString.IndexOf(phrase);
+
+                if (endIdx < 0)
+                    endIdx = 10;
+                string strDay = responseString.Substring(startIdx, endIdx - startIdx);
+                double day = 0;
+                double.TryParse(strDay, out day);
+                responseString = responseString.Substring(endIdx + phrase.Length, responseString.Length - (endIdx + phrase.Length));
+                
+                phrase = "data-btc=\"";
+                startIdx = responseString.IndexOf(phrase) + phrase.Length;
+                phrase = "\" >";
+                endIdx = responseString.IndexOf(phrase);
+
+                if (endIdx < 0)
+                    endIdx = 10;
+                string strWeek = responseString.Substring(startIdx, endIdx - startIdx);
+                double week = 0;
+                double.TryParse(strWeek, out week);
+                responseString = responseString.Substring(endIdx + phrase.Length, responseString.Length - (endIdx + phrase.Length));
+                
+                phrase = "</tr>";
+                startIdx = responseString.IndexOf(phrase) + phrase.Length;
+                responseString = responseString.Substring(startIdx + phrase.Length, responseString.Length - (startIdx + phrase.Length));
+
+                c.name = coinName;
+                c.marketCap = marketCap;
+                c.price = price;
+                c.volume = volume;
+                c.hr = hr;
+                c.day = day;
+                c.week = week;
+
+                c.fiveMin = 0;
+                c.posTicks = 0;
+                c.negTicks = 0;
+                c.upRatio = 0;
+                c.upRatio10 = 0;
+
+                if (snapShots.Count > 0)
+                {
+                    foreach (coinData d in snapShots[snapShots.Count - 1].coins)
+                        if (d.name == c.name)
+                        {
+                            c.fiveMin = hr - d.hr;
+
+                            c.posTicks = d.posTicks;
+                            c.negTicks = d.negTicks;
+                            c.posTicks10 = d.posTicks10;
+                            c.negTicks10 = d.negTicks10;
+
+                            if (c.fiveMin > 0)
+                            {
+                                c.posTicks++;
+                                c.posTicks10.Add(1);
+                                c.negTicks10.Add(0);
+                            }
+                            else if (c.fiveMin < 0)
+                            {
+                                c.negTicks++;
+                                c.posTicks10.Add(0);
+                                c.negTicks10.Add(1);
+                            }
+                            else
+                            {
+                                c.posTicks10.Add(0);
+                                c.negTicks10.Add(0);
+                            }
+
+                            if (c.posTicks10.Count > 10)
+                                c.posTicks10.RemoveAt(0);
+
+                            if (c.negTicks10.Count > 10)
+                                c.negTicks10.RemoveAt(0);
+
+                            c.upRatio = (c.posTicks - c.negTicks) / (double)numUpdates;
+
+                            int pos10sum = 0;
+                            int neg10sum = 0;
+
+                            foreach (int i in c.posTicks10)
+                                pos10sum += i;
+
+                            foreach (int i in c.negTicks10)
+                                neg10sum += i;
+
+                            c.upRatio10 = (pos10sum - neg10sum) / Math.Min((double)c.posTicks10.Count, 10.0);
+                        }
+                }
+                
+
+
+                if(c.volume > 300)
+                    s.coins.Add(c);
             }
 
-            //pctIncrease /= interval;
-            //pctIncrease *= 1000 * 60;
-
-            pctTally.Add(pctIncrease);
-
-            if (pctTally.Count > 10000)
-                pctTally.Remove(0);
-
-            pctSum = 0;
-
-            int tallyLength = 100;// 300 * 1000 / interval;
-
-            for (int i = 0; i < Math.Min(pctTally.Count, tallyLength); i++)
-                pctSum += pctTally[pctTally.Count - 1 - i];
-
-            points.Add(centers[centers.Count - 1]);
-
-            if (states.Contains(tradeState.hodl))
-                hodlPoints.Add(centers[centers.Count - 1]);
-            else
-                hodlPoints.Add(0);
-
-            dipPoints.Add(0);
-
-            points.RemoveAt(0);
-            hodlPoints.RemoveAt(0);
-            dipPoints.RemoveAt(0);
-            
-
-            strTradeAction = "";
-
-            foreach (tradeState s in states)
-                strTradeAction += s.ToString();
-
-
-            float curDip = 0;
-            float prevDip = 0;
-            float logDipPct = 0;
-
-            if (dips.Count > 0)
-            {
-                curDip = dips[dips.Count - 1];
-                prevDip = dips[Math.Max(0, dips.Count - 2)];
-                logDipPct = (curDip - prevDip) / curDip;
-            }
-
-            strLog += centers[centers.Count - 1].ToString("N2").Replace(",", "") + ",," + pctIncrease.ToString("N20") + ",," + pctSum.ToString("N20").Replace(",", "") + ",," + DateTime.Now + ",," + dipPoints[dipPoints.Count - 1].ToString("N2").Replace(",", "") + ",," + logDipPct.ToString("N10").Replace(",", "") + ",," + strTradeAction + "\n";
-
-            File.AppendAllText(logPath, strLog);
-            strLog = "";
+            snapShots.Add(s);
 
             /*
-            label1.Text = lastPrice.ToString() + "\n" + label1.Text;
-            label2.Text = pctIncrease.ToString() + "\n" + label2.Text;
-            label3.Text = pctSum.ToString() + "\n" + label3.Text;
+            strLog += "name" + ",," + "marketCap" + ",," + "price" + ",," + "volume" + ",," + "5min" + ",," + "hr" + ",," + "day" + ",," + "week" + "\n";
+
+            foreach(coinData c in s.coins)
+                strLog += c.name + ",," + c.marketCap + ",," + c.price + ",," + c.volume + ",," + c.fiveMin + ",," + c.hr + ",," + c.day + ",," + c.week + "\n";
+
+            logPath = DateTime.Now.ToString().Replace("/", "-").Replace(":", ".") + ".csv";
+
+            File.AppendAllText(logPath, strLog);
             */
+
+            Stats();
         }
 
-        
-        
+        public void Stats()
+        {
+            List<coinData> coins = snapShots[snapShots.Count - 1].coins.OrderByDescending(x => x.upRatio10).ThenByDescending(x => x.fiveMin).ToList();
+
+            //label1.Text += "name" + ",," + "volume" + ",," + "5min" + ",," + "hr" + ",," + "day" + ",," + "week" + "\n";
+
+            listView1.Items.Clear();
+
+            for(int i=0; i< coins.Count; i++)
+            {
+                //label1.Text += coins[i].name + ",," + coins[i].volume + ",," + coins[i].fiveMin + ",," + coins[i].hr + ",," + coins[i].day + ",," + coins[i].week + "\n";
+
+                string[] row = { coins[i].name, coins[i].volume.ToString(), coins[i].fiveMin.ToString(), coins[i].hr.ToString(), coins[i].day.ToString(), coins[i].week.ToString(), coins[i].upRatio.ToString(), coins[i].upRatio10.ToString() };
+                var listViewItem = new ListViewItem(row);
+                listView1.Items.Add(listViewItem);
+            }
+
+            label1.Text = "";
+        }
+
+
+        private int sortColumn = -1;
+        private void listView1_ColumnClick(object sender, ColumnClickEventArgs e)
+        {
+            Sorter s = (Sorter)listView1.ListViewItemSorter;
+            s.Column = e.Column;
+
+            if (s.Order == System.Windows.Forms.SortOrder.Ascending)
+            {
+                s.Order = System.Windows.Forms.SortOrder.Descending;
+            }
+            else
+            {
+                s.Order = System.Windows.Forms.SortOrder.Ascending;
+            }
+            listView1.Sort();
+        }
+
+        public class ListViewItemComparer : IComparer
+        {
+
+            private int col;
+            private SortOrder order;
+            public ListViewItemComparer()
+            {
+                col = 0;
+                order = SortOrder.Ascending;
+            }
+            public ListViewItemComparer(int column, SortOrder order)
+            {
+                col = column;
+                this.order = order;
+            }
+            public int Compare(object x, object y)
+            {
+                int returnVal = -1;
+                returnVal = String.Compare(((ListViewItem)x).SubItems[col].Text,
+                                ((ListViewItem)y).SubItems[col].Text);
+                // Determine whether the sort order is descending.
+                if (order == SortOrder.Descending)
+                    // Invert the value returned by String.Compare.
+                    returnVal *= -1;
+                return returnVal;
+            }
+
+
+        }
+        class Sorter : System.Collections.IComparer
+        {
+            public int Column = 0;
+            public System.Windows.Forms.SortOrder Order = SortOrder.Ascending;
+            public int Compare(object x, object y) // IComparer Member
+            {
+                if (!(x is ListViewItem))
+                    return (0);
+                if (!(y is ListViewItem))
+                    return (0);
+
+                ListViewItem l1 = (ListViewItem)x;
+                ListViewItem l2 = (ListViewItem)y;
+
+                if (l1.ListView.Columns[Column].Tag == null)
+                {
+                    l1.ListView.Columns[Column].Tag = "Text";
+                }
+
+                float f = 0;
+                if (float.TryParse(l1.SubItems[Column].Text, out f))
+                {
+                    float fl1 = float.Parse(l1.SubItems[Column].Text);
+                    float fl2 = float.Parse(l2.SubItems[Column].Text);
+
+                    if (Order == SortOrder.Ascending)
+                    {
+                        return fl1.CompareTo(fl2);
+                    }
+                    else
+                    {
+                        return fl2.CompareTo(fl1);
+                    }
+                }
+                else
+                {
+                    string str1 = l1.SubItems[Column].Text;
+                    string str2 = l2.SubItems[Column].Text;
+
+                    if (Order == SortOrder.Ascending)
+                    {
+                        return str1.CompareTo(str2);
+                    }
+                    else
+                    {
+                        return str2.CompareTo(str1);
+                    }
+                }
+            }
+        }
     }
 }
